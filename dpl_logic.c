@@ -111,12 +111,6 @@ union ip {
 	volatile struct ipv6hdr v6;
 };
 
-/* UDP/TCP ports, big endian */
-struct l4_ports {
-	unsigned short source;
-	unsigned short dest;
-};
-
 /**
  * @brief calculate hash_bit ind
  * @param h pktprs hdr
@@ -129,8 +123,6 @@ static bool calc_hash_bit_ind(struct pktprs_hdr *h, unsigned int *ind)
 	unsigned short hash16 = 0xFFFF;
 	unsigned int bit = 0;
 	union ip *ip;
-	struct l4_ports *l4;
-	struct tcphdr *tcp_hdr;
 	unsigned int lvl = get_correct_hdr_lvl(h);
 
 	if (PKTPRS_IS_IPV4(h, lvl)) {
@@ -153,17 +145,26 @@ static bool calc_hash_bit_ind(struct pktprs_hdr *h, unsigned int *ind)
 	}
 
 	if (PKTPRS_IS_TCP(h, lvl)) {
-		tcp_hdr = pktprs_tcp_hdr(h, lvl);
+		struct tcphdr *tcp_hdr = pktprs_tcp_hdr(h, lvl);
 		if (tcp_hdr->rst || tcp_hdr->fin)
 			return false;
-		l4 = (struct l4_ports *)tcp_hdr;
+		hash ^= tcp_hdr->source ^ tcp_hdr->dest;
 	} else if (PKTPRS_IS_UDP(h, lvl)) {
-		l4 = (struct l4_ports *)pktprs_udp_hdr(h, lvl);
+		struct udphdr *udphdr = pktprs_udp_hdr(h, lvl);
+		hash ^= udphdr->source ^ udphdr->dest;
+	} else if (PKTPRS_IS_ICMP(h, lvl)) {
+		struct icmphdr *icmp = pktprs_icmp_hdr(h, lvl);
+		if (icmp->type != ICMP_ECHO)
+			return false;
+		hash ^= icmp->un.echo.id;
+	} else if (PKTPRS_IS_ICMP6(h, lvl)) {
+		struct icmp6hdr *icmp6 = pktprs_icmp6_hdr(h, lvl);
+		if (icmp6->icmp6_type != ICMPV6_ECHO_REQUEST)
+			return false;
+		hash ^= icmp6->icmp6_dataun.u_echo.identifier;
 	} else {
 		return false;
 	}
-
-	hash ^= l4->source ^ l4->dest;
 
 	/* get bit between 0 to num of entries */
 	hash16 = ((unsigned short)hash) ^ ((unsigned short)(hash >> 16));

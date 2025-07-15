@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2024 MaxLinear, Inc.
+ * Copyright (C) 2020-2025 MaxLinear, Inc.
  * Copyright (C) 2020 Intel Corporation
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -48,48 +48,44 @@
 #define DPL_SCHED_HIGH_PRIO              1
 #define DPL_SCHED_LOW_PRIO               2
 
-#define ETH_P_OMCI 0x88C3
-
-#define VOICE_SIP_PORT   5060
 #define SNMP_PORT        161
-#define IKA_PORT         500
 #define DHCP_SERVER_PORT 67
 #define DHCP_CLIENT_PORT 68
+#define DNS_PORT         53
 
 /* dynamic bw limit is 75% from current bw */
 #define DPL_DYNAMIC_BW_LIMIT_RATIO(curr) (((curr) * 3) / 4)
-#define DPL_MIN_BW_LIMIT     (3000)
-#define DPL_CALC_DYNAMIC_BW_LIMIT(curr)                                         \
+#define DPL_MIN_BW_LIMIT         (1000)
+#define DPL_CALC_DYNAMIC_BW_LIMIT(curr)                                        \
 	(max((unsigned int)DPL_MIN_BW_LIMIT, DPL_DYNAMIC_BW_LIMIT_RATIO(curr)))
-/* dynmaic action for bw limit for queues with priority 4 and above */
-#define DPL_DYNAMIC_BW_PRIO (4)
 /* BW Limit definitions (in Kb) */
-#define DPL_QUEUE_DEFAULT_BW_LIMIT            3000
+#define DPL_QUEUE_DEFAULT_BW_LIMIT            DPL_MIN_BW_LIMIT
 #define DPL_QUEUE_HASH_BIT_BW_LIMIT           80000
 #define DPL_BWL_PRIO_0_QUEUE                  DPL_QUEUE_DEFAULT_BW_LIMIT
 #define DPL_BWL_PRIO_1_QUEUE                  DPL_QUEUE_DEFAULT_BW_LIMIT
 #define DPL_BWL_PRIO_2_QUEUE                  DPL_QUEUE_DEFAULT_BW_LIMIT
-#define DPL_BWL_PRIO_3_QUEUE                  DPL_QUEUE_DEFAULT_BW_LIMIT
-#define DPL_BWL_PRIO_4_QUEUE                  DPL_QUEUE_HASH_BIT_BW_LIMIT
+#define DPL_BWL_PRIO_3_QUEUE                  DPL_QUEUE_HASH_BIT_BW_LIMIT
+#define DPL_BWL_PRIO_4_QUEUE                  DPL_QUEUE_DEFAULT_BW_LIMIT
 /* priorities 5-7 mapped to the same queue */
 #define DPL_BWL_PRIO_7_QUEUE                  7000
 
 /* BW Limit for default DP queues under attack */
-#define DPL_DFLT_RESTRICTED_BW_LIMIT       15000
+#define DPL_DFLT_RESTRICTED_BW_LIMIT          80000
 
-#define DPL_VOICE_PRIO       0
-#define DPL_OMCI_PRIO        1
-#define DPL_PPP_DISC_PRIO    2
-#define DPL_PTP_PRIO         2
-#define DPL_OAM_PRIO         2
-#define DPL_802_1X_PRIO      2
-#define DPL_ARP_PRIO         2
-#define DPL_SNMP_PRIO        3
-#define DPL_DHCP_PRIO        3
-#define DPL_PING_PRIO        3
-#define DPL_IGMP_PRIO        3
-#define DPL_MLD_PRIO         3
-#define DPL_IKE_PRIO         3
+#define DPL_QUEUE_PRIO_MAX_ALLOWED            128
+#define DPL_QUEUE_LOW_PRIO_MAX_ALLOWED        64
+
+#define DPL_HASH_CTRL_PRIO   1
+/* TBD: add support for solicited ARP, then change ARP priority to CTRL_PRIO */
+#define DPL_ARP_PRIO         DPL_HASH_CTRL_PRIO
+#define DPL_SNMP_PRIO        DPL_CTRL_PRIO
+#define DPL_DHCP_PRIO        DPL_CTRL_PRIO
+#define DPL_DNS_PRIO         DPL_CTRL_PRIO
+#define DPL_PING_PRIO        DPL_CTRL_PRIO
+#define DPL_HASH_DATA_PRIO   3
+
+/* dynmaic action for bw limit for queues with hash priority and above */
+#define DPL_DYNAMIC_BW_PRIO (DPL_HASH_DATA_PRIO)
 
 #define INVALID_IFIND (0)
 
@@ -635,31 +631,17 @@ int dpl_set_action(enum dpl_lgm_action action, enum dpl_thr_type type,
 	return 0;
 }
 
-int dpl_reset_action(enum dpl_lgm_action action)
-{
-	spin_lock_bh(&db->lock);
-
-	memset(&db->mon_params.act[action], 0, sizeof(struct dpl_action));
-
-	dpl_mon_unregister();
-	dpl_mon_register(&db->mon_params);
-
-	spin_unlock_bh(&db->lock);
-
-	return 0;
-}
-
 static void dpl_configure_actions(void)
 {
 	/* Configure white list thresholds */
 	/* To enable/disable white list action there 2 attributes: PPS && CPU */
 	dpl_set_action(DPL_LGM_ACTION_WHITE_LIST, THR_ON, DPL_PPS,
-		       DPL_ACTION_WHITE_LIST_THR_ON_PPS_VAL_PER_CPU * db->num_cpus,
+		       DPL_ACTION_WHITE_LIST_THR_ON_PPS_VAL,
 		       DPL_ACTION_WHITE_LIST_THR_ON_PPS_SEQ_ITER,
 		       DPL_ACTION_WHITE_LIST_THR_ON_PPS_ITER,
 		       DPL_ACTION_WHITE_LIST_THR_ON_PPS_DEP, false);
 	dpl_set_action(DPL_LGM_ACTION_WHITE_LIST, THR_OFF, DPL_PPS,
-		       DPL_ACTION_WHITE_LIST_THR_OFF_PPS_VAL_PER_CPU * db->num_cpus,
+		       DPL_ACTION_WHITE_LIST_THR_OFF_PPS_VAL,
 		       DPL_ACTION_WHITE_LIST_THR_OFF_PPS_SEQ_ITER,
 		       DPL_ACTION_WHITE_LIST_THR_OFF_PPS_ITER,
 		       DPL_ACTION_WHITE_LIST_THR_OFF_PPS_DEP, false);
@@ -678,12 +660,12 @@ static void dpl_configure_actions(void)
 	/* Configure restrict default queues bw thresholds */
 	/* To enable/disable bw-limit action there 2 attributes: PPS && CPU */
 	dpl_set_action(DPL_LGM_ACTION_RESTRICT_DFLT_QUEUES_BW_LIMIT, THR_ON, DPL_PPS,
-		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_ON_PPS_VAL_PER_CPU * db->num_cpus,
+		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_ON_PPS_VAL,
 		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_ON_PPS_SEQ_ITER,
 		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_ON_PPS_ITER,
 		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_ON_PPS_DEP, false);
 	dpl_set_action(DPL_LGM_ACTION_RESTRICT_DFLT_QUEUES_BW_LIMIT, THR_OFF, DPL_PPS,
-		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_OFF_PPS_VAL_PER_CPU * db->num_cpus,
+		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_OFF_PPS_VAL,
 		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_OFF_PPS_SEQ_ITER,
 		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_OFF_PPS_ITER,
 		       DPL_ACTION_RESTRICT_BW_DPLT_QS_THR_OFF_PPS_DEP, false);
@@ -847,6 +829,46 @@ static void set_queue_bwl(int qid, bool high_prio_port, int prio)
 	dp_shaper_conf_set(&shaper, 0);
 }
 
+
+/**
+ * @brief Sets max_allowed to a queue
+ * @param qid             queue id
+ * @param high_prio_port  is high priority port (CPU has 2 ports)
+ * @param prio            priority
+ */
+static void set_queue_max_allowed(int qid, bool high_prio_port, int prio)
+{
+	struct pp_qos_queue_conf conf;
+
+	if (pp_qos_queue_conf_get(db->qdev, qid, &conf))
+		return;
+
+	if (high_prio_port) {
+		switch (prio) {
+		case 0:
+			conf.wred_max_allowed = DPL_QUEUE_PRIO_MAX_ALLOWED;
+			break;
+		case 1:
+			conf.wred_max_allowed = DPL_QUEUE_PRIO_MAX_ALLOWED;
+			break;
+		case 2:
+			conf.wred_max_allowed = DPL_QUEUE_PRIO_MAX_ALLOWED;
+			break;
+		case 4:
+			conf.wred_max_allowed = DPL_QUEUE_LOW_PRIO_MAX_ALLOWED;
+			break;
+		}
+	} else {
+		switch (prio) {
+		case 0:
+			conf.wred_max_allowed = DPL_QUEUE_LOW_PRIO_MAX_ALLOWED;
+			break;
+		}
+	}
+
+	pp_qos_queue_set(db->qdev, qid, &conf);
+}
+
 /**
  * @brief Creates host qos queues
  * @param cpu_id    queue id
@@ -862,6 +884,7 @@ static int create_host_qos_queues(unsigned int cpu_id, unsigned int port_id,
 {
 	struct dp_node_link node_info = {0};
 	unsigned short num_queues_to_create;
+	unsigned int qid;
 	int i;
 
 	node_info.inst = 0;
@@ -883,17 +906,15 @@ static int create_host_qos_queues(unsigned int cpu_id, unsigned int port_id,
 			pr_err("Failed to add queue node\n");
 			return -EIO;
 		}
+		qid = pp_qos_queue_id_get(db->qdev, node_info.node_id.q_id);
+		db_q_add(cpu_id, port_id, gpid, qid, true);
 
-		db_q_add(cpu_id, port_id, gpid,
-			 pp_qos_queue_id_get(db->qdev, node_info.node_id.q_id),
-			 true);
-
-		/* set queue bw limit */
+		/* set queue bw limit and max_allowed */
 		set_queue_bwl(node_info.node_id.q_id, high_prio, i);
+		set_queue_max_allowed(qid, high_prio, i);
 
 		pr_debug("Queue was added. id %d physical qid %d parent id %d\n",
-			 pp_qos_queue_id_get(db->qdev, node_info.node_id.q_id),
-			 node_info.node_id.q_id, node_info.p_node_id.sch_id);
+		       qid, node_info.node_id.q_id, node_info.p_node_id.sch_id);
 	}
 
 	return 0;
@@ -1221,44 +1242,50 @@ void dpl_protected_devs_dump(void)
 }
 
 struct activity_data {
-	unsigned long long last_used;
+	unsigned long long last_used[NR_CPUS];
 	unsigned long long last_boot;
 };
 
 static struct activity_data activity_data;
 
+/**
+ * @brief calc cpu usage for each cpu, and return the max usage
+ * @param usage ptr to return the max usage
+ */
 static void sysidle_check_cpu(unsigned long long *usage)
 {
-	int i, cpus;
-	unsigned long long curr_used;
+	int i;
+	unsigned long long curr_cpu_used;
 	unsigned long long curr_boot;
 	int diff_used;
 	int diff_boot;
+	int cpu_usage;
+	int max_usage = 0;
 
-	cpus = 0;
-	curr_used = 0;
+	curr_boot = ktime_get_boottime_ns();
+	diff_boot = (curr_boot - activity_data.last_boot) >> 16;
+	activity_data.last_boot = curr_boot;
 
 	for_each_online_cpu(i) {
-		curr_used += kcpustat_cpu(i).cpustat[CPUTIME_USER]
-			  +  kcpustat_cpu(i).cpustat[CPUTIME_NICE]
-			  +  kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM]
-			  +  kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ]
-			  +  kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
-		cpus++;
+		curr_cpu_used = kcpustat_cpu(i).cpustat[CPUTIME_USER]
+			      + kcpustat_cpu(i).cpustat[CPUTIME_NICE]
+			      + kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM]
+			      + kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ]
+			      + kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
+
+		diff_used = (curr_cpu_used - activity_data.last_used[i]) >> 16;
+		activity_data.last_used[i] = curr_cpu_used;
+
+		if (diff_boot <= 0 || diff_used < 0)
+			cpu_usage = 0;
+		else
+			cpu_usage = min(100 ,(100 * diff_used / diff_boot));
+
+		if (cpu_usage > max_usage)
+			max_usage = cpu_usage;
 	}
 
-	curr_boot = ktime_get_boottime_ns() * cpus;
-	diff_boot = (curr_boot - activity_data.last_boot) >> 16;
-	diff_used = (curr_used - activity_data.last_used) >> 16;
-	activity_data.last_boot = curr_boot;
-	activity_data.last_used = curr_used;
-
-	if (diff_boot <= 0 || diff_used < 0)
-		*usage = 0;
-	else if (diff_used >= diff_boot)
-		*usage = 100;
-	else
-		*usage = 100 * diff_used / diff_boot;
+	*usage = (unsigned long long)max_usage;
 }
 
 int dpl_dev_protect(struct net_device *dev)
@@ -1338,7 +1365,7 @@ EXPORT_SYMBOL(dpl_dev_protect);
 
 int dpl_dev_unprotect(struct net_device *dev)
 {
-	int ret, ifindex, i, j;
+	int ret = 0, ifindex, i, j;
 
 	if (!db || !dev || dev->ifindex == INVALID_IFIND)
 		return -EINVAL;
@@ -1375,69 +1402,6 @@ unlock:
 	return ret;
 }
 EXPORT_SYMBOL(dpl_dev_unprotect);
-
-static int set_default_prio_voice_sip(void)
-{
-	struct dpl_whitelist_field fields[2] = { 0 };
-
-	fields[0].type = DPL_FLD_IP_PROTO;
-	fields[0].ip_proto = IPPROTO_UDP;
-
-	fields[1].type = DPL_FLD_L4_DST_PORT;
-	fields[1].dst_port = htons(VOICE_SIP_PORT);
-
-	return dpl_whitelist_rule_add(DPL_VOICE_PRIO, fields, ARRAY_SIZE(fields));
-}
-
-static int set_default_prio_omci(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ETH_TYPE;
-	fields.eth_type = htons(ETH_P_OMCI);
-
-	return dpl_whitelist_rule_add(DPL_OMCI_PRIO, &fields, 1);
-}
-
-static int set_default_prio_ptp(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ETH_TYPE;
-	fields.eth_type = htons(ETH_P_1588);
-
-	return dpl_whitelist_rule_add(DPL_PTP_PRIO, &fields, 1);
-}
-
-static int set_default_prio_eth_oam(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ETH_TYPE;
-	fields.eth_type = htons(ETH_P_CFM);
-
-	return dpl_whitelist_rule_add(DPL_OAM_PRIO, &fields, 1);
-}
-
-static int set_default_prio_802_1x(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ETH_TYPE;
-	fields.eth_type = htons(ETH_P_PAE);
-
-	return dpl_whitelist_rule_add(DPL_802_1X_PRIO, &fields, 1);
-}
-
-static int set_default_prio_ppp_disc(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ETH_TYPE;
-	fields.eth_type = htons(ETH_P_PPP_DISC);
-
-	return dpl_whitelist_rule_add(DPL_PPP_DISC_PRIO, &fields, 1);
-}
 
 static int set_default_prio_arp(void)
 {
@@ -1477,6 +1441,34 @@ static int set_default_prio_dhcp(void)
 	fields[2].dst_port = htons(DHCP_CLIENT_PORT);
 
 	return dpl_whitelist_rule_add(DPL_DHCP_PRIO, fields, ARRAY_SIZE(fields));
+}
+
+static int set_default_prio_dns(void)
+{
+	struct dpl_whitelist_field fields[2] = { 0 };
+
+	fields[0].type = DPL_FLD_IP_PROTO;
+	fields[0].ip_proto = IPPROTO_UDP;
+
+	/* src port for DNS reply */
+	fields[1].type = DPL_FLD_L4_SRC_PORT;
+	fields[1].src_port = htons(DNS_PORT);
+
+	return dpl_whitelist_rule_add(DPL_DNS_PRIO, fields, ARRAY_SIZE(fields));
+}
+
+static int set_default_prio_dns_over_tcp(void)
+{
+	struct dpl_whitelist_field fields[2] = { 0 };
+
+	fields[0].type = DPL_FLD_IP_PROTO;
+	fields[0].ip_proto = IPPROTO_TCP;
+
+	/* src port for DNS reply */
+	fields[1].type = DPL_FLD_L4_SRC_PORT;
+	fields[1].src_port = htons(DNS_PORT);
+
+	return dpl_whitelist_rule_add(DPL_DNS_PRIO, fields, ARRAY_SIZE(fields));
 }
 
 static int set_default_prio_echo_req(void)
@@ -1523,82 +1515,18 @@ static int set_default_prio_echo_rply_v6(void)
 	return dpl_whitelist_rule_add(DPL_PING_PRIO, &fields, 1);
 }
 
-static int set_default_prio_igmp(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_IP_PROTO;
-	fields.ip_proto = IPPROTO_IGMP;
-
-	return dpl_whitelist_rule_add(DPL_IGMP_PRIO, &fields, 1);
-}
-
-static int set_default_prio_mld_query(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ICMP_TYPE_CODE;
-	/* ICMPV6: Multicast Listener Query: type: 130, code: 0 */
-	fields.icmp_type_code = htons(0x8200);
-
-	return dpl_whitelist_rule_add(DPL_MLD_PRIO, &fields, 1);
-}
-
-static int set_default_prio_mld_report(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ICMP_TYPE_CODE;
-	/* ICMPV6: Multicast Listener Report: type: 131, code: 0 */
-	fields.icmp_type_code = htons(0x8300);
-
-	return dpl_whitelist_rule_add(DPL_MLD_PRIO, &fields, 1);
-}
-
-static int set_default_prio_mld_done(void)
-{
-	struct dpl_whitelist_field fields = { 0 };
-
-	fields.type = DPL_FLD_ICMP_TYPE_CODE;
-	/* ICMPV6: Multicast Listener Done: type: 132, code: 0 */
-	fields.icmp_type_code = htons(0x8400);
-
-	return dpl_whitelist_rule_add(DPL_MLD_PRIO, &fields, 1);
-}
-
-static int set_default_prio_ika(void)
-{
-	struct dpl_whitelist_field fields[2] = { 0 };
-
-	fields[0].type = DPL_FLD_IP_PROTO;
-	fields[0].ip_proto = IPPROTO_UDP;
-
-	fields[1].type = DPL_FLD_L4_DST_PORT;
-	fields[1].dst_port = htons(IKA_PORT);
-
-	return dpl_whitelist_rule_add(DPL_IKE_PRIO, fields, ARRAY_SIZE(fields));
-}
-
 static void set_default_prio(void)
 {
-	if (set_default_prio_voice_sip())
-		pr_err("error to add default prio to Voice SIP\n");
-	if (set_default_prio_omci())
-		pr_err("error to add default prio to OMCI\n");
-	if (set_default_prio_ptp())
-		pr_err("error to add default prio to PTP\n");
-	if (set_default_prio_eth_oam())
-		pr_err("error to add default prio to Ethernet OAM\n");
-	if (set_default_prio_802_1x())
-		pr_err("error to add default prio to 802_1x\n");
-	if (set_default_prio_ppp_disc())
-		pr_err("error to add default prio to PPPoE discovery \n");
 	if (set_default_prio_arp())
 		pr_err("error to add default prio to ARP\n");
 	if (set_default_prio_snmp())
 		pr_err("error to add default prio to SNMP\n");
 	if (set_default_prio_dhcp())
 		pr_err("error to add default prio to DHCP\n");
+	if (set_default_prio_dns())
+		pr_err("error to add default prio to DNS\n");
+	if (set_default_prio_dns_over_tcp())
+		pr_err("error to add default prio to DNS over TCP\n");
 	if (set_default_prio_echo_req())
 		pr_err("error to add default prio to echo request ping\n");
 	if (set_default_prio_echo_rply())
@@ -1607,16 +1535,6 @@ static void set_default_prio(void)
 		pr_err("error to add default prio to IPv6 echo request ping\n");
 	if (set_default_prio_echo_rply_v6())
 		pr_err("error to add default prio to IPv6 echo reply ping\n");
-	if (set_default_prio_igmp())
-		pr_err("error to add default prio to IGMP\n");
-	if (set_default_prio_mld_query())
-		pr_err("error to add default prio to MLD query\n");
-	if (set_default_prio_mld_report())
-		pr_err("error to add default prio to MLD report\n");
-	if (set_default_prio_mld_done())
-		pr_err("error to add default prio to MLD done\n");
-	if (set_default_prio_ika())
-		pr_err("error to add default prio to IKE\n");
 }
 
 static void logic_param_set(struct dpl_logic_param *param)

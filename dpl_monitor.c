@@ -163,6 +163,11 @@ static void status_update_history(struct dpl_mon *mon, unsigned int act,
 {
 	unsigned long *bmap = mon->status[act].history_bmap[attr];
 
+	if (!bmap) {
+		pr_debug("Invalid bmap: NULL pointer\n");
+		return;
+	}
+
 	bitmap_shift_left(bmap, bmap, 1, DPL_HISTORY_SIZE);
 
 	if (is_above)

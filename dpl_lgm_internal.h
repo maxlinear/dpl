@@ -21,7 +21,7 @@
 #include <linux/types.h>
 #include "dpl_monitor.h"
 
-#define DPL_VERSION "0.0.16"
+#define DPL_VERSION "0.0.17"
 
 /**
  * @define DPL_NON_CONTINUOUS_THR ON/OFF

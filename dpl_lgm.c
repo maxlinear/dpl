@@ -48,10 +48,13 @@
 #define DPL_SCHED_HIGH_PRIO              1
 #define DPL_SCHED_LOW_PRIO               2
 
-#define SNMP_PORT        161
-#define DHCP_SERVER_PORT 67
-#define DHCP_CLIENT_PORT 68
-#define DNS_PORT         53
+#define SNMP_PORT          161
+#define DNS_PORT           53
+#define DHCP_SERVER_PORT   67
+#define DHCP_CLIENT_PORT   68
+#define DHCPV6_SERVER_PORT 547
+#define DHCPV6_CLIENT_PORT 546
+
 
 /* dynamic bw limit is 75% from current bw */
 #define DPL_DYNAMIC_BW_LIMIT_RATIO(curr) (((curr) * 3) / 4)
@@ -76,8 +79,11 @@
 #define DPL_QUEUE_LOW_PRIO_MAX_ALLOWED        64
 
 #define DPL_HASH_CTRL_PRIO   1
-/* TBD: add support for solicited ARP, then change ARP priority to CTRL_PRIO */
+/* DPL_ARP_PRIO get DPL_HASH_CTRL_PRIO priority because there
+ * is no hashing support for this protocol.
+ */
 #define DPL_ARP_PRIO         DPL_HASH_CTRL_PRIO
+#define DPL_NDP_PRIO         DPL_CTRL_PRIO
 #define DPL_SNMP_PRIO        DPL_CTRL_PRIO
 #define DPL_DHCP_PRIO        DPL_CTRL_PRIO
 #define DPL_DNS_PRIO         DPL_CTRL_PRIO
@@ -1413,6 +1419,39 @@ static int set_default_prio_arp(void)
 	return dpl_whitelist_rule_add(DPL_ARP_PRIO, &fields, 1);
 }
 
+static int set_default_prio_neighbor_advertisement(void)
+{
+	struct dpl_whitelist_field fields = { 0 };
+
+	fields.type = DPL_FLD_ICMP_TYPE_CODE;
+	/* ICMPv6: type: 134, code: 0 */
+	fields.icmp_type_code = htons(0x8600);
+
+	return dpl_whitelist_rule_add(DPL_NDP_PRIO, &fields, 1);
+}
+
+static int set_default_prio_neighbor_solicitation(void)
+{
+	struct dpl_whitelist_field fields = { 0 };
+
+	fields.type = DPL_FLD_ICMP_TYPE_CODE;
+	/* ICMPv6: type: 135, code: 0 */
+	fields.icmp_type_code = htons(0x8700);
+
+	return dpl_whitelist_rule_add(DPL_NDP_PRIO, &fields, 1);
+}
+
+static int set_default_prio_router_advertisement(void)
+{
+	struct dpl_whitelist_field fields = { 0 };
+
+	fields.type = DPL_FLD_ICMP_TYPE_CODE;
+	/* ICMPv6: type: 136, code: 0 */
+	fields.icmp_type_code = htons(0x8800);
+
+	return dpl_whitelist_rule_add(DPL_NDP_PRIO, &fields, 1);
+}
+
 static int set_default_prio_snmp(void)
 {
 	struct dpl_whitelist_field fields[2] = { 0 };
@@ -1439,6 +1478,23 @@ static int set_default_prio_dhcp(void)
 
 	fields[2].type = DPL_FLD_L4_DST_PORT;
 	fields[2].dst_port = htons(DHCP_CLIENT_PORT);
+
+	return dpl_whitelist_rule_add(DPL_DHCP_PRIO, fields, ARRAY_SIZE(fields));
+}
+
+static int set_default_prio_dhcp_v6(void)
+{
+	struct dpl_whitelist_field fields[3] = { 0 };
+
+	fields[0].type = DPL_FLD_IP_PROTO;
+	fields[0].ip_proto = IPPROTO_UDP;
+
+	/* src and dst ports for DHCPv6 reply */
+	fields[1].type = DPL_FLD_L4_SRC_PORT;
+	fields[1].src_port = htons(DHCPV6_SERVER_PORT);
+
+	fields[2].type = DPL_FLD_L4_DST_PORT;
+	fields[2].dst_port = htons(DHCPV6_CLIENT_PORT);
 
 	return dpl_whitelist_rule_add(DPL_DHCP_PRIO, fields, ARRAY_SIZE(fields));
 }
@@ -1498,7 +1554,7 @@ static int set_default_prio_echo_req_v6(void)
 	struct dpl_whitelist_field fields = { 0 };
 
 	fields.type = DPL_FLD_ICMP_TYPE_CODE;
-	/* ICMPV6: echo request: type: 128, code: 0 */
+	/* ICMPv6: echo request: type: 128, code: 0 */
 	fields.icmp_type_code = htons(0x8000);
 
 	return dpl_whitelist_rule_add(DPL_PING_PRIO, &fields, 1);
@@ -1509,7 +1565,7 @@ static int set_default_prio_echo_rply_v6(void)
 	struct dpl_whitelist_field fields = { 0 };
 
 	fields.type = DPL_FLD_ICMP_TYPE_CODE;
-	/* ICMPV6: echo reply: type: 129, code: 0 */
+	/* ICMPv6: echo reply: type: 129, code: 0 */
 	fields.icmp_type_code = htons(0x8100);
 
 	return dpl_whitelist_rule_add(DPL_PING_PRIO, &fields, 1);
@@ -1519,10 +1575,18 @@ static void set_default_prio(void)
 {
 	if (set_default_prio_arp())
 		pr_err("error to add default prio to ARP\n");
+	if (set_default_prio_neighbor_advertisement())
+		pr_err("error to add default prio to Neighbor Advertisement\n");
+	if (set_default_prio_neighbor_solicitation())
+		pr_err("error to add default prio to Neighbor Solicitation\n");
+	if (set_default_prio_router_advertisement())
+		pr_err("error to add default prio to Router Advertisement\n");
 	if (set_default_prio_snmp())
 		pr_err("error to add default prio to SNMP\n");
 	if (set_default_prio_dhcp())
 		pr_err("error to add default prio to DHCP\n");
+	if (set_default_prio_dhcp_v6())
+		pr_err("error to add default prio to DHCPv6\n");
 	if (set_default_prio_dns())
 		pr_err("error to add default prio to DNS\n");
 	if (set_default_prio_dns_over_tcp())
